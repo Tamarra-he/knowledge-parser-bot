@@ -98,4 +98,4 @@ if __name__ == "__main__":
     # 启动时先获取一次token
     get_tenant_token()
     # 本地调试用，线上Railway部署删除这行，由平台启动
-    app.run(host="0.0.0.0", port=3000)
+    app.run(host="0.0.0.0", port=8080)
