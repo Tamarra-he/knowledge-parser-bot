@@ -1,101 +1,85 @@
-from flask import Flask, request, jsonify
+import os
 import requests
+import json
+from flask import Flask, request
 
-# ===================== 请修改为你自己的配置 =====================
-VERIFICATION_TOKEN = "你后台加密策略里的Verification Token"
-APP_ID = "飞书应用凭证App ID"
-APP_SECRET = "飞书应用凭证App Secret"
-# =================================================================
+# 读取Railway环境变量（不会泄露密钥，无需修改）
+APP_ID = os.environ["APP_ID"]
+APP_SECRET = os.environ["APP_SECRET"]
+VERIFICATION_TOKEN = os.environ["VERIFICATION_TOKEN"]
 
+# Flask初始化
 app = Flask(__name__)
+# 全局缓存token，避免重复请求
+global_access_token = ""
 
-# 全局缓存tenant_access_token，避免频繁请求飞书接口
-tenant_access_token = ""
-
-# 获取飞书凭证
-def get_tenant_token():
-    global tenant_access_token
+# 获取飞书应用access_token
+def get_lark_token():
+    global global_access_token
     url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
-    payload = {
+    headers = {"Content-Type": "application/json"}
+    data = {
         "app_id": APP_ID,
         "app_secret": APP_SECRET
     }
-    resp = requests.post(url, json=payload)
-    data = resp.json()
-    if data.get("code") == 0:
-        tenant_access_token = data["tenant_access_token"]
-        print("✅ 获取token成功:", tenant_access_token)
+    resp = requests.post(url, headers=headers, json=data)
+    res_json = resp.json()
+    if res_json.get("code") == 0:
+        global_access_token = res_json["tenant_access_token"]
+        print("✅ 获取飞书Token成功")
     else:
-        print("❌ 获取token失败:", data)
+        print("❌ 获取Token失败", res_json)
+    return global_access_token
 
-# 给用户发送文本消息
+# 发送飞书私聊消息
 def send_message(open_id, text):
     url = "https://open.feishu.cn/open-apis/im/v1/messages"
     headers = {
-        "Authorization": f"Bearer {tenant_access_token}",
+        "Authorization": f"Bearer {global_access_token}",
         "Content-Type": "application/json"
     }
-    payload = {
+    data = {
+        "receive_id_type": "open_id",
         "receive_id": open_id,
         "msg_type": "text",
-        "content": jsonify({"text": text}).data.decode()
+        "content": json.dumps({"text": text})
     }
-    resp = requests.post(url, headers=headers, json=payload)
-    print("📤 发送消息结果:", resp.json())
+    requests.post(url, headers=headers, json=data)
 
-# 消息处理主逻辑
-def handle_message_event(event_json):
-    header = event_json.get("header", {})
-    event = event_json.get("event", {})
-    event_type = header.get("event_type")
-
-    # 只处理用户私聊消息
-    if event_type != "im.message.receive_v1":
-        return
-
-    # 提取用户信息、用户发送的文本
-    sender_open_id = event.get("sender", {}).get("sender_id", {}).get("open_id")
-    msg_content = event.get("message", {}).get("content", "")
-    print(f"💬 用户[{sender_open_id}]发来消息: {msg_content}")
-
-    # 自动回复
-    reply_text = f"收到你的消息：{msg_content}"
-    send_message(sender_open_id, reply_text)
-
-# webhook接收飞书推送
+# 回调接口（飞书事件推送入口）
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    # 打印完整请求，方便排错
-    raw_data = request.get_data().decode("utf-8")
-    headers = dict(request.headers)
-    print("\n==================== 收到飞书请求 ====================")
-    print("请求头:", headers)
-    print("原始报文:", raw_data)
+    # 打印完整推送日志，方便排查问题
+    raw_body = request.get_data().decode("utf-8")
+    print("=====飞书完整推送报文=====\n", raw_body)
+    body = json.loads(raw_body)
 
-    try:
-        req_json = request.get_json()
-    except Exception as e:
-        print("解析JSON失败", e)
-        return "", 200
+    # 1. 飞书后台校验逻辑（首次添加回调地址必走）
+    if "challenge" in body:
+        if body.get("token") == VERIFICATION_TOKEN:
+            return json.dumps({"challenge": body["challenge"]})
+        return "token校验失败", 403
 
-    # 1. 校验Token，来源合法才处理
-    req_token = req_json.get("token", "")
-    if req_token != VERIFICATION_TOKEN:
-        print("❌ Token校验失败，拒绝请求")
-        return "", 403
+    # 2. 处理用户发送消息事件
+    event = body.get("event", {})
+    event_type = event.get("type")
+    if event_type == "im.message.receive_v1":
+        message = event.get("message", {})
+        # 过滤机器人自己发的消息，避免循环回复
+        sender = event.get("sender", {})
+        sender_open_id = sender.get("sender_id", {}).get("open_id")
+        msg_text = json.loads(message.get("content", "{}")).get("text", "")
+        print(f"收到用户消息：{msg_text}")
 
-    # 2. 飞书后台保存地址时的校验事件
-    if "challenge" in req_json:
-        print("✅ 处理地址校验")
-        return jsonify({"challenge": req_json["challenge"]})
+        # 自动回复
+        reply_text = f"收到你的消息：{msg_text}\n机器人测试回复正常！"
+        send_message(sender_open_id, reply_text)
 
-    # 3. 用户聊天消息事件
-    handle_message_event(req_json)
-    return "", 200
+    # 固定返回200，飞书要求
+    return "ok", 200
 
-# 程序入口
+# 服务启动仅本地测试使用，Railway部署用gunicorn启动，不会执行这里
 if __name__ == "__main__":
-    # 启动时先获取一次token
-    get_tenant_token()
-    # 本地调试用，线上Railway部署删除这行，由平台启动
-    app.run(host="0.0.0.0", port=8080)
+    get_lark_token()
+    # 关闭重载，减少资源占用
+    app.run(host="0.0.0.0", port=8080, debug=False, use_reloader=False)
