@@ -130,3 +130,5 @@ def feishu_webhook():
 if __name__ == "__main__":
     print("🔥 启动Flask应用...")
     app.run(host="0.0.0.0", port=8080, debug=False)
+def create_app():
+    return app
