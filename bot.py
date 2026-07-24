@@ -20,6 +20,7 @@ def feishu_webhook():
     print("=====飞书完整推送报文=====")
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
+    # ========== 下面所有代码必须缩进在函数内部 ==========
     # 1. 首次URL校验
     if data.get("type") == "url_verification":
         if data.get("token") == VERIFICATION_TOKEN:
