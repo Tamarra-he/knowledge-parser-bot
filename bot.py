@@ -17,28 +17,22 @@ def webhook():
     print("=" * 50)
     print("收到请求")
     
-    # 获取原始数据
     data = request.get_json()
     print(f"数据类型: {type(data)}")
     print(f"数据keys: {data.keys() if data else 'None'}")
     
-    # 如果是URL验证
     if data and data.get("type") == "url_verification":
         print("URL验证")
         return {"challenge": data["challenge"]}
     
-    # 解析消息
     try:
-        # 直接从数据中提取
         event = data.get("event", {})
         message = event.get("message", {})
         sender = event.get("sender", {})
         
-        # 获取用户ID
         sender_id = sender.get("sender_id", {}).get("open_id")
         print(f"发送者: {sender_id}")
         
-        # 获取消息内容
         content_str = message.get("content", "{}")
         print(f"原始content: {content_str}")
         
@@ -46,7 +40,6 @@ def webhook():
         text = content.get("text", "")
         print(f"消息内容: {text}")
         
-        # 获取token
         print("获取token...")
         token_res = requests.post(
             "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
@@ -61,7 +54,6 @@ def webhook():
         token = token_json.get("tenant_access_token")
         print(f"token: {token[:20]}...")
         
-        # 发送消息
         print("发送回复...")
         send_res = requests.post(
             "https://open.feishu.cn/open-apis/im/v1/messages",
